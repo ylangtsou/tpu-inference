@@ -340,7 +340,8 @@ class TPUModelRunner(KVConnectorModelRunnerMixin, LoRAModelRunnerMixin):
         sharding_strategy: ShardingConfigManager = self.vllm_config.sharding_config
         mesh_shape = (
             sharding_strategy.model_dp_size,
-            sharding_strategy.tp_size,
+            4, 
+            sharding_strategy.tp_size // 4,
         )
 
         enforce_device_order = (

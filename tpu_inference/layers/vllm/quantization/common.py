@@ -36,13 +36,13 @@ class JaxCommonLinearConfig:
         self.output_sharding = None
 
         if isinstance(layer, RowParallelLinear):
-            self.weight_sharding = P(None, "model")
+            self.weight_sharding = P(None, ("kv", "model"))
             if self.enable_sequence_parallelism:
-                self.output_sharding = P("model", None)
+                self.output_sharding = P(("kv", "model"), None)
         elif isinstance(layer, ColumnParallelLinear):
-            self.weight_sharding = P("model", None)
+            self.weight_sharding = P(("kv", "model"), None)
             if self.enable_sequence_parallelism:
-                self.input_sharding = P("model", None)
+                self.input_sharding = P(("kv", "model"), None)
 
             if isinstance(layer, MergedColumnParallelLinear) or isinstance(
                     layer, QKVParallelLinear):
@@ -61,7 +61,14 @@ class JaxCommonLinearConfig:
                 " bad performance.", type(layer))
 
         self.bias_sharding = P(self.weight_sharding[0])
-        self.n_shards = self.mesh.shape.get(self.weight_sharding[0], 1)
+
+        shard_config = self.weight_sharding[0]
+        if not isinstance(shard_config, tuple):
+            shard_config = [shard_config]
+
+        self.n_shards = 1
+        for i in shard_config:
+            self.n_shards *= self.mesh.shape.get(i, 1)
 
     def get_input_sharding(self, x: torchax.tensor.Tensor):
         if self.enable_sequence_parallelism:

@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from vllm.v1.configs.vllm_config import VllmConfig
 
 MESH_AXIS_NAMES = ("data", "attn_dp", "expert", "model")
-MESH_AXIS_NAMES_2D = ('data', 'model')
+MESH_AXIS_NAMES_2D = ('data', 'kv', 'model')
 
 
 class ShardingAxisNameBase:
