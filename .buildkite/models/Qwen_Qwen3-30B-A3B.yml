@@ -23,7 +23,7 @@ steps:
 
   - label: "Integration tests for Qwen/Qwen3-30B-A3B"
     key: "Qwen_Qwen3-30B-A3B_IntegrationTest"
-    depends_on: "record_Qwen_Qwen3-30B-A3B_UnitTest"
+    #depends_on: "record_Qwen_Qwen3-30B-A3B_UnitTest"
     soft_fail: true
     env:
       TEST_MODEL: Qwen/Qwen3-30B-A3B

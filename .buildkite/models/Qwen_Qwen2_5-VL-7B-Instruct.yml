@@ -23,7 +23,7 @@ steps:
 
   - label: "Integration tests for Qwen/Qwen2.5-VL-7B-Instruct"
     key: "Qwen_Qwen2_5-VL-7B-Instruct_IntegrationTest"
-    depends_on: "record_Qwen_Qwen2_5-VL-7B-Instruct_UnitTest"
+    # depends_on: "record_Qwen_Qwen2_5-VL-7B-Instruct_UnitTest"
     soft_fail: true
     env:
       TEST_MODEL: Qwen/Qwen2.5-VL-7B-Instruct
