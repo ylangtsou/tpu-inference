@@ -77,9 +77,12 @@ class TPUWorker(AbstractTpuWorker):
         self.cache_config = vllm_config.cache_config
         self.local_rank = local_rank
         self.rank = rank
+        logger.warning(f"rank: {rank}, local_rank: {local_rank}")
         self.distributed_init_method = distributed_init_method
         self.is_driver_worker = is_driver_worker
         self.devices = devices if devices is not None else []
+        self.device_ranks = set(device.id for device in self.devices)
+        logger.warning(f"vllm_config.device_config: {vllm_config.device_config}, devices: {devices} devices rank {self.device_ranks}")
 
         if self.model_config.trust_remote_code:
             # note: lazy import to avoid importing torch before initializing
@@ -217,13 +220,62 @@ class TPUWorker(AbstractTpuWorker):
             "LoRA is not supported by the JAX worker yet.")
 
     def profile(self, is_start: bool = True):
-        if is_start:
+        logger.warning(f"device ranks: {self.device_ranks}")
+        if is_start and 0 in self.device_ranks:
             options = jax.profiler.ProfileOptions()
             options.python_tracer_level = os.getenv("PYTHON_TRACER_LEVEL", 0)
-            jax.profiler.start_trace(self.profile_dir,
-                                     profiler_options=options)
-        else:
+            if not envs.VLLM_TPU_USING_PATHWAYS:
+                jax.profiler.start_trace(self.profile_dir,
+                                        profiler_options=options)
+            else:
+                import datetime
+                now = datetime.datetime.now()
+                formatted_string = now.strftime("%Y-%m-%d-%H-%M-%S")
+                gcs_uri = f"gs://sixiang-disagg-pw/{formatted_string}"
+                jax.profiler.start_trace(gcs_uri)
+                logger.warning(f"start tracing at {gcs_uri}")
+        elif 0 in self.device_ranks:
             jax.profiler.stop_trace()
+            # import subprocess
+            # import datetime
+            # def upload_folder_with_gsutil(local_folder_path):
+            #     if not os.path.isdir(local_folder_path):
+            #         logger.warning(f"Error: Local folder '{local_folder_path}' not found.")
+            #         return
+            #     now = datetime.datetime.now()
+            #     formatted_string = now.strftime("%Y-%m-%d-%H-%M-%S")
+            #     gcs_uri = f"gs://sixiang-disagg-pw/{formatted_string}"
+                
+            #     command = ["gsutil", "-m", "cp", "-r", local_folder_path, gcs_uri]
+                
+            #     logger.warning(f"Executing command: {' '.join(command)}")
+                
+            #     try:
+            #         # Using check=True to raise an error if the command fails
+            #         result = subprocess.run(command, check=True, capture_output=True, text=True)
+            #         logger.warning("Folder uploaded successfully!")
+            #         logger.warning(f"gsutil stdout: {result.stdout}")
+                    
+            #     except FileNotFoundError:
+            #         logger.warning("Error: 'gsutil' command not found. Is the Google Cloud SDK installed and in your PATH?")
+                    
+            #     except subprocess.CalledProcessError as e:
+            #         logger.warning("Error during gsutil execution.")
+            #         logger.warning(f"gsutil stderr: {e.stderr}")
+            # time.sleep(30)
+            # directory_path = '.'
+            # all_files_recursive = []
+
+            # for dirpath, dirnames, filenames in os.walk(self.profile_dir):
+            #     for filename in filenames:
+            #         # Construct full path and add to the list
+            #         full_path = os.path.join(dirpath, filename)
+            #         all_files_recursive.append(full_path)
+
+            # logger.warning("All files recursively:")
+            # for file_path in all_files_recursive:
+            #     logger.warning(file_path)
+            # upload_folder_with_gsutil(self.profile_dir)
 
     def load_model(self) -> None:
         self.model_runner.load_model()

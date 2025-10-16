@@ -348,6 +348,15 @@ class KVCacheManager:
             batched_kv_cache_per_layer = self._jitted_gather_kv_cache(
                 self.runner.kv_caches, jnp.array(block_ids))
         return batched_kv_cache_per_layer
+    @staticmethod
+    @jax.jit
+    def maybe_stack_kv_cache(kv_cache_slices: List[jax.Array]):
+        return jnp.stack(kv_cache_slices)
+
+    @staticmethod
+    @jax.jit
+    def maybe_unstack_kv_cache(kv_cache_slices: jax.Array):
+        return list(jnp.unstack(kv_cache_slices))
 
     def transfer_kv_cache(self,
                           kv_cache_slices: List[jax.Array]) -> List[jax.Array]:
@@ -370,14 +379,15 @@ class KVCacheManager:
         # The KV cache slices have a shape of (num_tokens, num_kv_heads * 2, head_size).
         # We shard along the num_kv_heads dimension (axis=1), which corresponds
         # to the "model" axis of the mesh for tensor parallelism.
-        logger.debug(
+        logger.warning(
             f"Transferring kv cache shape {len(kv_cache_slices)} * {kv_cache_slices[0].shape} sharding {kv_cache_slices[0].sharding} size {kv_cache_slices[0].nbytes * len(kv_cache_slices)/1024/1024} Mbytes"
         )
+        kv_cache_slices = self.maybe_stack_kv_cache(kv_cache_slices)
         sharding = NamedSharding(self.runner.mesh,
                                  PartitionSpec(None, "model"))
         transferred_kv_cache = jax.device_put(kv_cache_slices, sharding)
-        for cache in transferred_kv_cache:
-            cache.block_until_ready()
+        transferred_kv_cache.block_until_ready()
+        transferred_kv_cache = self.maybe_unstack_kv_cache(transferred_kv_cache)
         return transferred_kv_cache
 
     def insert_request_with_kv_cache(

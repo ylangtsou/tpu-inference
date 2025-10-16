@@ -36,6 +36,7 @@ RUN pip install -r requirements.txt
 COPY requirements_benchmarking.txt .
 # These are needed for the E2E benchmarking tests (i.e. tests/e2e/benchmarking/mlperf.sh)
 RUN pip install -r requirements_benchmarking.txt
+RUN pip install gsutil
 COPY . .
 RUN pip install -e .
 

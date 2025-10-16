@@ -290,11 +290,8 @@ class _DisaggOrchestrator:
 
         while self.live:
             block = not decode_engine.scheduler.has_requests()
-            transfer_pending = False
             for transfer_backlog in self._transfer_backlogs:
-                transfer_pending |= not transfer_backlog.empty()
-            if transfer_pending:
-                time.sleep(0.02)
+                block |= not transfer_backlog.empty()
 
             while True:
                 # We need to check input batch as well as the request completion is delayed
