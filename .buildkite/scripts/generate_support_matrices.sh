@@ -12,6 +12,7 @@ mapfile -t model_list < <(buildkite-agent meta-data get "${MODEL_LIST_KEY}" --de
 mapfile -t feature_list < <(buildkite-agent meta-data get "${FEATURE_LIST_KEY}" --default "")
 MODEL_STAGES=("UnitTest" "IntegrationTest" "Benchmark")
 FEATURE_STAGES=("CorrectnessTest" "PerformanceTest")
+MODEL_CATEGORY=("text-only" "multimodel")
 
 # Output CSV files
 model_support_matrix_csv="model_support_matrix.csv"
@@ -19,6 +20,28 @@ echo "Model,UnitTest,IntegrationTest,Benchmark" > "$model_support_matrix_csv"
 
 feature_support_matrix_csv="feature_support_matrix.csv"
 echo "Feature,CorrectnessTest,PerformanceTest" > "$feature_support_matrix_csv"
+
+process_models_by_category() {
+    local category="$1"
+    local csv_filename="$2" # Pass filename in
+
+    echo "Model,UnitTest,IntegrationTest,Benchmark" > "$csv_filename"
+
+    # Loop through all models for this specific category
+    for model in "${model_list[@]}"; do
+        row="\"$model\""
+        for stage in "${MODEL_STAGES[@]}"; do
+            # --- NEW KEY FORMAT ---
+            # Get result using the new model:category:stage format
+            result=$(buildkite-agent meta-data get "${model}:${category}:${stage}" --default "N/A")
+            row="$row,$result"
+            if [ "${result}" != "✅" ] && [ "${result}" != "N/A" ] ; then
+                ANY_FAILED=true
+            fi
+        done
+        echo "$row" >> "$csv_filename"
+    done
+}
 
 process_models() {
     for model in "$@"; do
@@ -48,6 +71,21 @@ process_features() {
     done
 }
 
+# Loop through each category and generate its specific CSV
+if [ ${#model_list[@]} -gt 0 ]; then
+    for category in "${MODEL_CATEGORY[@]}"; do
+        category_filename="$category"
+        csv_filename="${category_filename}_model_support_matrix.csv"
+        
+        # Add to our list for later upload and cleanup
+        model_csv_files+=("$csv_filename")
+
+        echo "--- Generating matrix for category: $category ---"
+        # Generate the CSV file for this category
+        process_models_by_category "$category" "$csv_filename"
+    done
+fi
+
 if [ ${#model_list[@]} -gt 0 ]; then
     process_models "${model_list[@]}"
 fi
@@ -65,7 +103,12 @@ echo "--- Feature support matrix ---"
 cat "$feature_support_matrix_csv"
 
 echo "--- Saving support matrices as Buildkite Artifacts ---"
-buildkite-agent artifact upload "$model_support_matrix_csv"
+for csv_file in "${model_csv_files[@]}"; do
+    cat "$csv_file"
+    buildkite-agent artifact upload "$csv_file"
+done
+
+#buildkite-agent artifact upload "$model_support_matrix_csv"
 buildkite-agent artifact upload "$feature_support_matrix_csv"
 echo "Reports uploaded successfully."
 
