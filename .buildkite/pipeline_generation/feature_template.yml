@@ -1,4 +1,5 @@
 # {FEATURE_NAME}
+# {CATEGORY}
 steps:
   - label: "Correctness tests for {FEATURE_NAME}"
     key: "{SANITIZED_FEATURE_NAME}_CorrectnessTest"

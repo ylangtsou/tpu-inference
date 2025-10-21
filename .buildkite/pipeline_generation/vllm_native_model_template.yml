@@ -1,4 +1,5 @@
 # {MODEL_NAME}
+# {CATEGORY}
 steps:
   - label: "Unit tests for {MODEL_NAME}"
     key: "{SANITIZED_MODEL_NAME}_UnitTest"
