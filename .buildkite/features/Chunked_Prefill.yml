@@ -1,18 +1,18 @@
-# Chunked_Prefill
+# Chunked Prefill
 # kernel support matrix
 steps:
-  - label: "Correctness tests for Chunked_Prefill"
+  - label: "Correctness tests for Chunked Prefill"
     key: "Chunked_Prefill_CorrectnessTest"
     soft_fail: true
     agents:
       queue: tpu_v6e_queue
     commands:
       - echo "placeholder"  # TODO : replace with your correctness test command
-  - label: "Record correctness test result for Chunked_Prefill"
+  - label: "Record correctness test result for Chunked Prefill"
     key: "record_Chunked_Prefill_CorrectnessTest"
     depends_on: "Chunked_Prefill_CorrectnessTest"
     env:
-      CI_TARGET: "Chunked_Prefill"
+      CI_TARGET: "Chunked Prefill"
       CI_STAGE: "CorrectnessTest"
       CI_CATEGORY: "kernel support matrix"
     agents:
@@ -21,7 +21,7 @@ steps:
       - |
         .buildkite/scripts/record_step_result.sh Chunked_Prefill_CorrectnessTest
 
-  - label: "Performance tests for Chunked_Prefill"
+  - label: "Performance tests for Chunked Prefill"
     key: "Chunked_Prefill_PerformanceTest"
     depends_on: "record_Chunked_Prefill_CorrectnessTest"
     soft_fail: true
@@ -33,7 +33,7 @@ steps:
     key: "record_Chunked_Prefill_PerformanceTest"
     depends_on: "Chunked_Prefill_PerformanceTest"
     env:
-      CI_TARGET: "Chunked_Prefill"
+      CI_TARGET: "Chunked Prefill"
       CI_STAGE: "PerformanceTest"
       CI_CATEGORY: "kernel support matrix"
     agents:

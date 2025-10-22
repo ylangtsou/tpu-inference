@@ -26,7 +26,8 @@ case $OUTCOME in
     ;;
 esac
 
-buildkite-agent meta-data set "${CI_TARGET}:${CI_CATEGORY}:${CI_STAGE}" "${message}"
+buildkite-agent meta-data set "${CI_TARGET}_category" "${CI_CATEGORY}"
+buildkite-agent meta-data set "${CI_TARGET}:${CI_STAGE}" "${message}"
 
 if [ "${OUTCOME}" != "passed" ] && [ "${OUTCOME}" != "skipped" ] ; then
     exit 1

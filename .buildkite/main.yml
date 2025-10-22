@@ -39,7 +39,7 @@ steps:
 #       - echo "committing verified commit hashes"
 #
    - label: "Commit support matrices if is nightly build"
-     #if: build.env("NIGHTLY") == "1" || build.tag =~ /^v?[0-9]+(\.[a-zA-Z0-9]+)*([a-zA-Z]+[0-9]*)?$/
+     if: build.env("NIGHTLY") == "1" || build.tag =~ /^v?[0-9]+(\.[a-zA-Z0-9]+)*([a-zA-Z]+[0-9]*)?$/
      key: commit_nightly_support_matrices
      depends_on: generate_support_matrices
      agents:
