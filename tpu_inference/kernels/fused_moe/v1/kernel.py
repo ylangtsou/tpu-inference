@@ -1267,6 +1267,7 @@ def fused_ep_moe(
             ((0, 0), (0, hidden_size - actual_hidden_size)),
             constant_values=0,
         )
+        """
         w1 = jnp.pad(
             w1,
             (
@@ -1332,6 +1333,7 @@ def fused_ep_moe(
                 ),
                 constant_values=0,
             )
+        """
 
     tokens = tokens.reshape(-1, t_packing, hidden_size // t_packing)
 

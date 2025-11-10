@@ -173,11 +173,11 @@ class VllmUnquantizedFusedMoEMethod(UnquantizedFusedMoEMethod):
         # TODO: Use autotune table once we have it.
         self.block_size = {
             "bt": 64,
-            "bf": 1024,
+            "bf": 1536,
             "bd1": 1536,
             "bd2": 1536,
             "btc": 64,
-            "bfc": 1024,
+            "bfc": 1536,
             "bd1c": 1536,
             "bd2c": 1536,
         }
@@ -232,6 +232,22 @@ class VllmUnquantizedFusedMoEMethod(UnquantizedFusedMoEMethod):
 
             # Transpose w2_weight to (num_experts, intermediate_size, hidden_size)
             w2_weight_transposed = jnp.transpose(w2_weight, (0, 2, 1))
+
+            # TODO(kyuyeunk): Hardcoded for now, will remove later.
+            padded_hidden_size = 3072
+            padded_intermediate_size = 3072
+            w13_weight_transposed = jnp.pad(
+                w13_weight_transposed,
+                ((0, 0), (0, 0), (0, padded_hidden_size - hidden_size),
+                 (0, padded_intermediate_size - intermediate_size)),
+                constant_values=0,
+            )
+            w2_weight_transposed = jnp.pad(
+                w2_weight_transposed,
+                ((0, 0), (0, padded_intermediate_size - intermediate_size),
+                 (0, padded_hidden_size - hidden_size)),
+                constant_values=0,
+            )
 
             # Apply EP sharding
             w13_weight = jax.device_put(
