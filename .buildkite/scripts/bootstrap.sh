@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # --- Skip build if only docs/icons changed ---
-echo "--- :git: Checking changed files"
+echo "--- :git: Checking changed files test"
 
 # Get a list of all files changed in this commit
 FILES_CHANGED=$(git diff-tree --no-commit-id --name-only -r "$BUILDKITE_COMMIT")
