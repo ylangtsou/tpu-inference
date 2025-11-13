@@ -5,7 +5,7 @@ steps:
     key: "FP8_W8A8_CorrectnessTest"
     soft_fail: true
     agents:
-      queue: {QUEUE}
+      queue: tpu_v6e_queue
     commands:
       - echo "placeholder"  # TODO : replace with your correctness test command
   - label: "Record correctness test result for FP8 W8A8"
@@ -26,7 +26,7 @@ steps:
     depends_on: "record_FP8_W8A8_CorrectnessTest"
     soft_fail: true
     agents:
-      queue: {QUEUE}
+      queue: tpu_v6e_queue
     commands:
       - echo "placeholder"  # TODO : replace with your performance test command
   - label: "Record performance test result for FP8 W8A8"
