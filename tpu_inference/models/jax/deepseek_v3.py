@@ -1,4 +1,4 @@
-import re
+import os, re
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
@@ -103,6 +103,10 @@ class DeepSeekV3(nnx.Module):
             logger.info("sparse matmul is disabled, using dense matmul")
         self.mesh = mesh
 
+        self.use_moe_kernel = bool(int(os.getenv("USE_MOE_EP_KERNEL", "0"))),
+        if self.use_moe_kernel:
+            logger.info("MoE kernel is enabled")
+
         self.weight_loader = DeepSeekV3WeightLoader(
             vllm_config=vllm_config,
             num_layers=num_layers,
@@ -120,7 +124,7 @@ class DeepSeekV3(nnx.Module):
                                  hidden_size=hidden_size,
                                  dtype=dtype,
                                  rngs=self.rng,
-                                 vd_sharding=(('data', 'expert', 'model'),
+                                 vd_sharding=(('data', 'model'),
                                               None),
                                  random_init=self.random_init)
 
@@ -181,8 +185,8 @@ class DeepSeekV3(nnx.Module):
                                        hidden_size=hidden_size,
                                        intermediate_size=ffw_intermediate_size,
                                        rngs=self.rng,
-                                       df_sharding=(None, ('model', 'expert')),
-                                       fd_sharding=(('model', 'expert'), None),
+                                       df_sharding=(None, 'model'),
+                                       fd_sharding=('model', None),
                                        random_init=self.random_init))
 
             self.layers.append(block)
@@ -202,7 +206,8 @@ class DeepSeekV3(nnx.Module):
                 dtype=dtype,
                 activation_ffw_td=('data', None),
                 ed_sharding=('model', None),
-                e_sharding=('model', ))
+                e_sharding=('model', ),
+                use_moe_kernel=self.use_moe_kernel)
             if self.sparse_matmul:
                 # TODO: orginize the SparseMoE and DenseMoE better given they share most interfaces
                 custom_module = SparseMoE(
@@ -222,6 +227,7 @@ class DeepSeekV3(nnx.Module):
                     efd_sharding=('model', None, None),
                     quantized_dtype=self.weight_loader.quant_dtype
                     if self.weight_loader.is_model_quantized else None,
+                    use_moe_kernel = self.use_moe_kernel,
                     router=router) if is_moe_layer else DenseFFW(
                         dtype=dtype,
                         hidden_act=hidden_act,
@@ -229,8 +235,8 @@ class DeepSeekV3(nnx.Module):
                         intermediate_size=ffw_intermediate_size,
                         rngs=self.rng,
                         random_init=self.random_init,
-                        df_sharding=(None, ('model', 'expert')),
-                        fd_sharding=(('model', 'expert'), None))
+                        df_sharding=(None, 'model'),
+                        fd_sharding=('model', None))
             else:
                 custom_module = MoE(
                     dtype=dtype,
@@ -252,8 +258,8 @@ class DeepSeekV3(nnx.Module):
                         intermediate_size=ffw_intermediate_size,
                         rngs=self.rng,
                         random_init=self.random_init,
-                        df_sharding=(None, ('model', 'expert')),
-                        fd_sharding=(('model', 'expert'), None))
+                        df_sharding=(None, 'model'),
+                        fd_sharding=('model', None))
 
             shared_experts = DenseFFW(dtype=dtype,
                                       hidden_act=hidden_act,
@@ -262,8 +268,8 @@ class DeepSeekV3(nnx.Module):
                                       moe_intermediate_size,
                                       rngs=self.rng,
                                       random_init=self.random_init,
-                                      df_sharding=(None, ('model', 'expert')),
-                                      fd_sharding=(('model', 'expert'), None))
+                                      df_sharding=(None, 'model'),
+                                      fd_sharding=('model', None))
 
             pre_attention_norm = RMSNorm(
                 dims=hidden_size,
@@ -304,8 +310,8 @@ class DeepSeekV3(nnx.Module):
                               hidden_size=hidden_size,
                               dtype=dtype,
                               rngs=self.rng,
-                              vd_sharding=(('data', 'expert', 'model'), None),
-                              dv_sharding=(None, ('data', 'expert', 'model')),
+                              vd_sharding=(('data', 'model'), None),
+                              dv_sharding=(None, ('data', 'model')),
                               random_init=self.random_init)
 
     # For compatibility with flax.
