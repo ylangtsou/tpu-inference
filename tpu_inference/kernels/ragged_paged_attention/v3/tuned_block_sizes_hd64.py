@@ -166,6 +166,11 @@ def get_tuned_block_sizes(
 ) -> tuple[int, int]:
     """Search tuned values for (num_kv_pages_per_blk, num_queries_per_blk)."""
 
+    if sliding_window is not None:
+        return (4, 16)
+    else:
+        return (16, 16)
+
     # Set default block sizes for each tpu_version.
     tpu_version = get_tpu_version()
     if tpu_version < 4:

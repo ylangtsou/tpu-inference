@@ -318,6 +318,8 @@ def _ragged_paged_attention_kernel(
     q_len = q_end - q_start
     kv_len = kv_lens_ref[seq_idx]
 
+    print(f'kky {page_size=} {sliding_window=} {bkv_sz=}')
+
     if sliding_window is None:
         bkv_idx_start = next_seq_bkv_idx_start = 0
     else:
@@ -396,12 +398,6 @@ def _ragged_paged_attention_kernel(
         k_span = bkv_idx * bkv_sz + lax.broadcasted_iota(jnp.int32, s.shape, 1)
         mask = jnp.logical_and(k_span <= q_span, k_span < kv_len)
         s = jnp.where(mask, s, mask_value)
-        mask = q_span < k_span
-
-        if sliding_window is not None and strict_sliding_window:
-            mask = jnp.logical_and(mask, q_span - sliding_window < k_span)
-
-        s = jnp.where(mask, s, mask_value)
         s_rowmax = jnp.max(s, axis=1, keepdims=True)
 
         if attention_sink_ref is not None:
@@ -448,7 +444,7 @@ def _ragged_paged_attention_kernel(
         o_curr = broadcast_minor(exp_m_diff, o_prev.shape) * o_prev + pv
         head_acc_ref[...] = o_curr
 
-    def _async_copy(src, dst, sem, wait):
+    def _async_copy(src, dst, sem, wait, add=False):
         if debug_mode:
             # Skip DMA if debug mode is enabled.
             return
@@ -456,9 +452,9 @@ def _ragged_paged_attention_kernel(
         if wait:
             cp.wait()
         else:
-            cp.start()
+            cp.start(add=add)
 
-    def _fetch_bkv(seq_idx, bkv_idx, bkv_sem_idx, *, wait=False):
+    def _fetch_bkv(seq_idx, bkv_idx, bkv_sem_idx, *, wait=False, add=False):
         sem = sems.at[0, bkv_sem_idx]
         vmem_ref = bkv_x2_ref.at[bkv_sem_idx]
 
@@ -510,6 +506,7 @@ def _ragged_paged_attention_kernel(
                     vmem_ref.at[pl.ds(i * page_size, sz)],
                     sem,
                     wait=False,
+                    add=add,
                 )
                 debug_print("[RPA debug] loop_body i={}, sz={}", i, sz)
                 return offset + sz
@@ -534,6 +531,7 @@ def _ragged_paged_attention_kernel(
                     vmem_ref.at[pl.ds(offset, bkv_sz_frm_new)],
                     sem,
                     wait,
+                    add=add,
                 )
 
             return kv_len_start + offset, bkv_sz_frm_new
@@ -666,8 +664,8 @@ def _ragged_paged_attention_kernel(
             wait,
         )
 
-    def start_fetch_bkv(seq_idx, bkv_idx, bkv_sem_idx):
-        return _fetch_bkv(seq_idx, bkv_idx, bkv_sem_idx)
+    def start_fetch_bkv(seq_idx, bkv_idx, bkv_sem_idx, add=False):
+        return _fetch_bkv(seq_idx, bkv_idx, bkv_sem_idx, add=add)
 
     def wait_fetch_bkv(seq_idx, bkv_idx, bkv_sem_idx):
         return _fetch_bkv(seq_idx, bkv_idx, bkv_sem_idx, wait=True)
@@ -743,7 +741,7 @@ def _ragged_paged_attention_kernel(
         for i in range(0, kv_packing):
             cur_kv = pltpu.bitcast((kv >> (i * bitwidth)).astype(repack_ty),
                                    kv_dtype)
-            cur_kv = jnp.nan_to_num(cur_kv)
+            # cur_kv = jnp.nan_to_num(cur_kv)
             lst.append(cur_kv)
         return lst
 
@@ -814,15 +812,23 @@ def _ragged_paged_attention_kernel(
 
                 # Get next bkv ids.
                 bkv_sem_idx = sem_ids_ref[1]
+                bkv_fetch_valid = bkv_sem_idx // 2 == 0
+                bkv_sem_idx %= 2
+
                 next_seq_idx, _, next_bkv_idx, next_bkv_sem_idx = get_next_bkv_ids(
                     seq_idx, bq_idx, bkv_idx, bkv_sem_idx)
+
+                next_bkv_fetch_valid = next_bkv_sem_idx // 2 == 0
 
                 # Prefetch next bkv
                 @pl.when(next_seq_idx < num_seqs)
                 def prefetch_next_bkv():
                     sem_ids_ref[1] = next_bkv_sem_idx
-                    start_fetch_bkv(next_seq_idx, next_bkv_idx,
-                                    next_bkv_sem_idx)
+
+                    @pl.when(next_bkv_fetch_valid)
+                    def _():
+                        start_fetch_bkv(next_seq_idx, next_bkv_idx,
+                                        next_bkv_sem_idx)
 
                 # Wait for cur bq if not ready yet
                 @pl.when(bkv_idx == bkv_idx_start)
@@ -830,15 +836,17 @@ def _ragged_paged_attention_kernel(
                     wait_fetch_bq(seq_idx, bq_idx, bq_sem_idx)
 
                 # Wait for cur bkv
-                offset, update_sz = wait_fetch_bkv(seq_idx, bkv_idx,
-                                                   bkv_sem_idx)
+                @pl.when(bkv_fetch_valid)
+                def load_and_update_bkv():
+                    offset, update_sz = wait_fetch_bkv(seq_idx, bkv_idx,
+                                                       bkv_sem_idx)
 
-                # Start updating bkv to kv cache if applicable.
-                # Only needed in first bq loop.
-                @pl.when(jnp.logical_and(update_sz > 0, bq_idx == 0))
-                def update_cur_bkv_to_cache():
-                    start_update_kv_cache(seq_idx, bkv_sem_idx, offset,
-                                          update_sz)
+                    # Start updating bkv to kv cache if applicable.
+                    # Only needed in first bq loop.
+                    @pl.when(jnp.logical_and(update_sz > 0, bq_idx == 0))
+                    def update_cur_bkv_to_cache():
+                        start_update_kv_cache(seq_idx, bkv_sem_idx, offset,
+                                              update_sz)
 
                 debug_print(
                     "[RPA debug] -----------flash attention-----------")
@@ -942,8 +950,9 @@ def _ragged_paged_attention_kernel(
 
     @pl.when(seq_idx == 0)
     def prologue():
+        # bkv_x2_ref[...] = jnp.zeros(bkv_x2_ref.shape, bkv_x2_ref.dtype)
         start_fetch_bq(0, 0, 0)
-        start_fetch_bkv(0, bkv_idx_start, 0)
+        start_fetch_bkv(0, bkv_idx_start, 0, add=True)
 
     @pl.when(seq_idx < decode_end)
     def process_decode():
