@@ -57,7 +57,8 @@ def get_req_paddings(min_req_size: int, max_req_size: int) -> list[int]:
         paddings.append(num)
         num = get_padded_num_reqs_with_upper_limit(num + 1, max_req_size)
     logger.info(f"Prepared request paddings: {paddings}")
-    return paddings
+    paddings.append(384)
+    return sorted(paddings)
 
 
 def get_token_paddings(min_token_size: int, max_token_size: int,
@@ -91,7 +92,8 @@ def get_token_paddings(min_token_size: int, max_token_size: int,
             num += padding_gap
             paddings.append(num)
     logger.info(f"Prepared token paddings: {paddings}")
-    return paddings
+    paddings.append(384)
+    return sorted(paddings)
 
 
 def get_padded_token_len(paddings: list[int], x: int) -> int:
