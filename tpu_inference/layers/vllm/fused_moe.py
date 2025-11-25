@@ -2,10 +2,10 @@ import functools
 
 import jax
 from jax import numpy as jnp
-from jax.experimental.pallas.ops.tpu.megablox.gmm import gmm
 from jax.experimental.shard_map import shard_map
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
+from tpu_inference.kernels.megablox.gmm import gmm
 from tpu_inference.layers.vllm.linear_common import \
     slice_sharded_tensor_for_concatenation
 
@@ -101,6 +101,7 @@ def _get_tiling_size_for_gmm_kernel(m: int, k: int, n: int,
 def tensor_sharded_gmm_merged_column_parallel(
     lhs: jax.Array,
     rhs: jax.Array,
+    rhs_scale: jax.Array | None,
     rhs_bias: jax.Array | None,
     group_sizes: jax.Array,
     transpose_rhs: bool,
@@ -129,6 +130,13 @@ def tensor_sharded_gmm_merged_column_parallel(
         check_rep=False,
     )(lhs, rhs, group_sizes)
 
+    if rhs_scale is not None:
+        rhs_scale = jnp.repeat(rhs_scale,
+                               group_sizes,
+                               0,
+                               total_repeat_length=m)
+        gmm_result *= rhs_scale
+
     if rhs_bias is not None:
 
         def _add_bias(gmm_result_local, rhs_bias_local, group_sizes_global):
@@ -155,6 +163,7 @@ def tensor_sharded_gmm_merged_column_parallel(
 def tensor_sharded_gmm_row_parallel(
     lhs: jax.Array,
     rhs: jax.Array,
+    rhs_scale: jax.Array | None,
     rhs_bias: jax.Array | None,
     group_sizes: jax.Array,
     transpose_rhs: bool,
@@ -185,6 +194,14 @@ def tensor_sharded_gmm_row_parallel(
         out_specs=(P("data")),
         check_rep=False,
     )(lhs, rhs, group_sizes)
+
+    if rhs_scale is not None:
+        rhs_scale = jnp.repeat(rhs_scale,
+                               group_sizes,
+                               0,
+                               total_repeat_length=m)
+        gmm_result *= rhs_scale
+
     if rhs_bias is not None:
 
         def _add_bias(gmm_result_local, rhs_bias_local, group_sizes_global):
@@ -349,6 +366,8 @@ def fused_moe_func(
     hidden_states: jax.Array,
     w1: jax.Array,
     w2: jax.Array,
+    w1_scale: jax.Array | None,
+    w2_scale: jax.Array | None,
     w1_bias: jax.Array | None,
     w2_bias: jax.Array | None,
     gating_output: jax.Array,
@@ -427,6 +446,7 @@ def fused_moe_func(
         x1, x2 = tensor_sharded_gmm_merged_column_parallel(
             x,
             w1,
+            w1_scale,
             w1_bias,
             group_sizes,
             transpose_rhs=True,
@@ -452,6 +472,7 @@ def fused_moe_func(
         x = tensor_sharded_gmm_row_parallel(
             x,
             w2,
+            w2_scale,
             w2_bias,
             group_sizes,
             transpose_rhs=True,
@@ -496,6 +517,8 @@ def fused_moe_func_padded(
     hidden_states: jax.Array,
     w1: jax.Array,
     w2: jax.Array,
+    w1_scale: jax.Array | None,
+    w2_scale: jax.Array | None,
     w1_bias: jax.Array | None,
     w2_bias: jax.Array | None,
     gating_output: jax.Array,
@@ -525,6 +548,8 @@ def fused_moe_func_padded(
             expanded_hidden_states,
             w1,
             w2,
+            w1_scale,
+            w2_scale,
             w1_bias,
             w2_bias,
             expanded_gating_output,
@@ -543,6 +568,8 @@ def fused_moe_func_padded(
             hidden_states,
             w1,
             w2,
+            w1_scale,
+            w2_scale,
             w1_bias,
             w2_bias,
             gating_output,

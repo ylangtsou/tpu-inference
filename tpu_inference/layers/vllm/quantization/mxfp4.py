@@ -68,6 +68,30 @@ def dequantize_block_weight(weight: jax.Array,
     return weight_dequantized.reshape(orig_shape).astype(out_dtype)
 
 
+def quantize_weight(weight: jax.Array,
+                    dtype: jnp.dtype,
+                    block_size: int | None = None):
+    dtype_finfo = jnp.finfo(dtype)
+    dtype_min = float(dtype_finfo.min)
+    dtype_max = float(dtype_finfo.max)
+
+    if block_size is not None:
+        weight_shape = weight.shape
+        weight = weight.reshape(weight_shape[:-1] + (-1, block_size))
+
+    abs_max = jnp.max(jnp.abs(weight), axis=-1, keepdims=True)
+    scale = abs_max / dtype_max
+
+    weight_q = jnp.clip(weight / scale, dtype_min, dtype_max)
+    weight_q = weight_q.astype(dtype)
+
+    if block_size is not None:
+        weight_q = weight_q.reshape(weight_shape)
+    scale = jnp.squeeze(scale)
+
+    return weight_q, scale
+
+
 @register_quantization_config(get_tpu_quant_method(MXFP4))
 class VllmMxfp4Config(Mxfp4Config, JaxCommonConfig):
 
@@ -247,6 +271,12 @@ class VllmMxfp4MoEMethod(Mxfp4MoEMethod):
                 assert intermediate_size % n_shards == 0
                 w13_weight = reorder_concatenated_tensor_for_sharding(
                     w13_weight, output_sizes, n_shards, dim=1)
+
+                w13_weight, w13_scale = quantize_weight(
+                    w13_weight, jnp.float8_e4m3fn)
+                w2_weight, w2_scale = quantize_weight(w2_weight,
+                                                      jnp.float8_e4m3fn)
+
                 w13_weight = jax.device_put(
                     w13_weight,
                     Format(Layout((0, 1, 2)),
@@ -255,6 +285,19 @@ class VllmMxfp4MoEMethod(Mxfp4MoEMethod):
                     w2_weight,
                     Format(Layout((0, 1, 2)),
                            NamedSharding(self.mesh, P(None, None, "model"))))
+
+                w13_scale = jax.device_put(
+                    w13_scale.astype(jnp.bfloat16),
+                    Format(Layout((0, 1)),
+                           NamedSharding(self.mesh, P(None, "model"))))
+                w2_scale = jax.device_put(
+                    w2_scale.astype(jnp.bfloat16),
+                    Format(Layout((0, 1)),
+                           NamedSharding(self.mesh, P(None, None))))
+                layer.w13_scale = Parameter(torch_view(w13_scale),
+                                            requires_grad=False)
+                layer.w2_scale = Parameter(torch_view(w2_scale),
+                                           requires_grad=False)
 
                 w13_bias = reorder_concatenated_tensor_for_sharding(
                     w13_bias, output_sizes, n_shards, dim=1)
@@ -325,6 +368,8 @@ class VllmMxfp4MoEMethod(Mxfp4MoEMethod):
                 jax_view(x),
                 jax_view(layer.w13_weight),
                 jax_view(layer.w2_weight),
+                jax_view(layer.w13_scale),
+                jax_view(layer.w2_scale),
                 jax_view(layer.w13_bias),
                 jax_view(layer.w2_bias),
                 jax_view(router_logits),
