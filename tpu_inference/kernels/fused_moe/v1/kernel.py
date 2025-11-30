@@ -19,7 +19,7 @@ def align_to(x, a):
 
 
 def get_dtype_packing(dtype):
-    bits = dtypes.bit_width(dtype)
+    bits = dtypes.itemsize_bits(dtype)
     return 32 // bits
 
 
@@ -177,7 +177,7 @@ def _fused_ep_moe_kernel(
         # Output
     output_hbm,  # (local_num_tokens, hidden_size)
         # Scratch
-    t2e_routing_x2_smem,  # <bt_sem_id> (2, bt, padded_num_experts)
+    t2e_routing_x2_smem,  # <bt_sem_id> (2, bt, align_to(top_k, 128))
         d2e_count_x2_smem,  # <bt_sem_id> (2, num_devices, 1, padded_num_experts)
         expert_offsets_x2_smem,  # <bt_sem_id> (2, 2, padded_num_experts): for a2a_s and a2a_g
         expert_starts_x2_smem,  # <bt_sem_id> (2, 1, padded_num_experts)
@@ -227,6 +227,11 @@ def _fused_ep_moe_kernel(
     local_num_tokens = tokens_hbm.shape[0]
     local_num_experts, intermediate_size, hidden_size = w2_hbm.shape
     right_id = (my_id + 1) % num_devices
+    num_experts = a2a_g_hbm.shape[0]
+    padded_num_experts = d2e_count_x2_smem.shape[-1]
+    padded_top_k = t2e_routing_x2_smem.shape[-1]
+    assert padded_num_experts == align_to(num_experts, 128)
+    assert padded_top_k == align_to(top_k, 128)
 
     t_dtype = tokens_hbm.dtype
     t_packing = get_dtype_packing(t_dtype)
@@ -300,35 +305,40 @@ def _fused_ep_moe_kernel(
     def get_top_k(input, top_k, renormalize_topk_logits):
         assert len(input.shape) == 2, input.shape
         input = input.astype(jnp.float32)
+        padded_k_shape = (input.shape[0], padded_top_k)
         top_k_logits_lst = []
         top_k_indices_lst = []
         t2e = jnp.zeros(input.shape, dtype=jnp.int32)
-        t2e_routing = jnp.zeros(input.shape, dtype=jnp.int32)
+        t2e_routing = jnp.zeros(padded_k_shape, dtype=jnp.int32)
         iota = jax.lax.broadcasted_iota(jnp.int32, input.shape, 1)
-        top_k_logits_sum = jnp.zeros((input.shape[0], 128), jnp.float32)
+        padded_k_iota = jax.lax.broadcasted_iota(jnp.int32, padded_k_shape, 1)
+        top_k_logits_sum = jnp.zeros(padded_k_shape, jnp.float32)
 
         for k_id in range(top_k):
             # TODO(jevinjiang): return both top_k values and indices in Mosaic
             top_k_logits = jnp.broadcast_to(
-                jnp.max(input, axis=1, keepdims=True),
-                (input.shape[0], 128)).astype(input.dtype)
+                jnp.max(input[:, :num_experts], axis=1, keepdims=True),
+                padded_k_shape,
+            ).astype(input.dtype)
+            top_k_logits_lst.append(top_k_logits)
             if renormalize_topk_logits:
                 top_k_logits_sum += top_k_logits
-            top_k_logits_lst.append(top_k_logits)
             # TODO(jevinjiang): support bf16 argmax in Mosaic
             top_k_indices = jnp.broadcast_to(
-                jnp.argmax(input, axis=1, keepdims=True), input.shape)
+                jnp.argmax(input[:, :num_experts], axis=1, keepdims=True),
+                padded_k_shape,
+            )
             top_k_indices_lst.append(top_k_indices)
-            t2e_routing = jnp.where(iota == k_id, top_k_indices, t2e_routing)
-            mask = iota == top_k_indices
+            t2e_routing = jnp.where(padded_k_iota == k_id, top_k_indices,
+                                    t2e_routing)
+            mask = iota == broadcast_minor(top_k_indices, input.shape)
             t2e += mask.astype(jnp.int32)
             if k_id != top_k - 1:
                 input = jnp.where(mask, -jnp.inf, input)
 
         if renormalize_topk_logits:
             for k_id in range(top_k):
-                top_k_logits_lst[
-                    k_id] = top_k_logits_lst[k_id] / top_k_logits_sum
+                top_k_logits_lst[k_id] /= top_k_logits_sum
 
         expert_sizes = jnp.sum(t2e, axis=0, keepdims=True)
         expert_starts = jnp.zeros_like(expert_sizes)
@@ -1071,27 +1081,38 @@ def _fused_ep_moe_kernel(
 
         all_reduce_metadata(bt_sem_id, t2e_routing, expert_starts,
                             expert_sizes)
+        sync_barrier()
 
+        # Start a2a scatter for first active expert.
         start_a2a_scatter(bt_id=bt_id, e_sem_id=e_sem_id, local_e_id=0)
 
         def run_per_expert(local_e_id, e_sem_id):
             sync_barrier()
+
+            # Prefetch weights for CURRENT active expert.
+            # TODO(jevinjiang): Weights double buffering is controlled by the
+            # expert_ffn. It is hard to prefetch weights in previous iteration due to
+            # the unknown bw_sem_id. Alternatively, we can use triple buffering to
+            # potentially improve the overlapping but it takes more VMEM scratch.
+            start_fetch_bw1(local_e_id, bw1_sem_id=0, bf_id=0, bd1_id=0)
+            start_fetch_bw3(local_e_id, bw3_sem_id=0, bf_id=0, bd3_id=0)
+
+            # Next ids.
             next_e_sem_id = lax.select(e_sem_id == 0, 1, 0)
             next_local_e_id = local_e_id + 1
 
+            # Start a2a scatter for NEXT active expert.
             @pl.when(next_local_e_id < local_num_experts)
             def _():
                 start_a2a_scatter(bt_id, next_e_sem_id, next_local_e_id)
 
-            # Prefetch weights for active expert.
-            start_fetch_bw1(local_e_id, bw1_sem_id=0, bf_id=0, bd1_id=0)
-            start_fetch_bw3(local_e_id, bw3_sem_id=0, bf_id=0, bd3_id=0)
-
-            # Wait for a2a scatter and perform FFN for active expert.
+            # Wait for a2a scatter and perform FFN for CURRENT active expert.
             wait_a2a_scatter_recv(bt_id, e_sem_id, local_e_id)
+
+            # Perform FFN for CURRENT active expert.
             expert_ffn(bt_id, e_sem_id, local_e_id)
 
-            # Wait for a2a gather to send back tokens for active expert.
+            # Start a2a gather to send back tokens for CURRENT active expert.
             start_a2a_gather(bt_id, e_sem_id, local_e_id)
 
             # A must-wait before next sync_barrier.
@@ -1181,6 +1202,8 @@ def fused_ep_moe(
     bd2c: int,
     ep_axis_name: str = "model",
 ):
+    print("Check kernel is being used")
+
     # TODO(jevinjiang): move all these assertions to validation function.
     # Assert all other axes have length of 1
     assert len(mesh.shape) == 2, "Expect 2D mesh"
@@ -1375,7 +1398,7 @@ def fused_ep_moe(
                 out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.HBM),
                 scratch_shapes=([
                     # t2e_routing_x2_smem
-                    pltpu.SMEM((2, bt, padded_num_experts), jnp.int32),
+                    pltpu.SMEM((2, bt, align_to(top_k, 128)), jnp.int32),
                     # d2e_count_x2_smem
                     pltpu.SMEM((2, num_devices, 1, padded_num_experts),
                                jnp.int32),
