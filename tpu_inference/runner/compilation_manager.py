@@ -44,8 +44,11 @@ class CompilationManager:
         """Helper to create dummy tensors for precompilation."""
         tensor = jnp.ones(shape, dtype=dtype)
         if sharding:
-            return device_array(self.runner.mesh, tensor, sharding=sharding)
-        return device_array(self.runner.mesh, tensor)
+            return jax.make_array_from_process_local_data(sharding, tensor)
+            # return device_array(self.runner.mesh, tensor, sharding=sharding)
+        return jax.make_array_from_process_local_data(
+            NamedSharding(self.runner.mesh, PartitionSpec(None)), tensor)
+        # return device_array(self.runner.mesh, tensor)
 
     def _should_skip_padding_combination(self, outer_val: int, inner_val: int,
                                          only_equal: bool) -> bool:
