@@ -309,6 +309,14 @@ class VllmMxfp4MoEMethod(Mxfp4MoEMethod):
                     dim=1,
                 )
 
+                w13_weight_scale = jnp.swapaxes(w13_weight_scale, 1, 2)
+                w13_weight_scale = jnp.expand_dims(w13_weight_scale, 2)
+                w2_weight_scale = jnp.swapaxes(w2_weight_scale, 1, 2)
+                w2_weight_scale = jnp.expand_dims(w2_weight_scale, 2)
+
+                w13_bias = jnp.expand_dims(w13_bias, 1)
+                w2_bias = jnp.expand_dims(w2_bias, 1)
+
                 w13_weight = jax.lax.with_sharding_constraint(
                     w13_weight, NamedSharding(self.mesh,
                                               P(None, "model", None)))
@@ -317,14 +325,15 @@ class VllmMxfp4MoEMethod(Mxfp4MoEMethod):
                                                           "model")))
                 w13_weight_scale = jax.lax.with_sharding_constraint(
                     w13_weight_scale,
-                    NamedSharding(self.mesh, P(None, "model", None)))
+                    NamedSharding(self.mesh, P(None, None, None, "model")))
                 w2_weight_scale = jax.lax.with_sharding_constraint(
                     w2_weight_scale,
-                    NamedSharding(self.mesh, P(None, None, "model")))
+                    NamedSharding(self.mesh, P(None, "model", None, None)))
                 w13_bias = jax.lax.with_sharding_constraint(
-                    w13_bias, NamedSharding(self.mesh, P(None, "model")))
+                    w13_bias, NamedSharding(self.mesh, P(None, None, "model")))
                 w2_bias = jax.lax.with_sharding_constraint(
-                    w2_bias, NamedSharding(self.mesh, P(None, None)))
+                    w2_bias, NamedSharding(self.mesh, P(None, None, None)))
+
             return w13_weight, w13_weight_scale, w13_bias, w2_weight, w2_weight_scale, w2_bias
 
         w13_weight, w13_weight_scale, w13_bias, w2_weight, w2_weight_scale, w2_bias = wrapper(
