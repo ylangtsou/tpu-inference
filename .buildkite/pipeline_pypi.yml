@@ -2,21 +2,10 @@ steps:
   # -----------------------------------------------------------------
   # TEST STEPS - Calling wrapper
   # -----------------------------------------------------------------
-   - label: "Wait for 20 mins"
-     if: build.env("NIGHTLY") == "1"
-     key: "wait_20_minutes"
-     depends_on: "record_verified_commit_hashes"
-     agents:
-      queue: cpu
-     commands:
-      - "echo 'Starting 20 minute delay...'"
-      - "sleep 1200"
-      - "echo 'Delay finished, starting benchmarks.'"
-
    - label: "Performance benchmarks for meta-llama/Llama-3.1-8B-Instruct"
      key: "meta-llama_Llama-3_1-8B-Instruct_Benchmark"
-     if: build.env("NIGHTLY") == "1"
-     depends_on: "wait_20_minutes"
+     #if: build.env("NIGHTLY") == "1"
+     depends_on: "record_verified_commit_hashes"
      agents:
       queue: tpu_v6e_queue
      env:
@@ -34,9 +23,9 @@ steps:
         .buildkite/scripts/run_with_pypi.sh bash /workspace/tpu_inference/tests/e2e/benchmarking/benchmark.sh
 
    - label: "Performance benchmarks for Qwen/Qwen3-4B"
-     if: build.env("NIGHTLY") == "1"
+     #if: build.env("NIGHTLY") == "1"
      key: "Qwen_Qwen3-4B_Benchmark"
-     depends_on: "wait_20_minutes"
+     depends_on: "record_verified_commit_hashes"
      agents:
       queue: tpu_v6e_queue
      env:

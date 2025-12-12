@@ -5,6 +5,8 @@ ARG VLLM_COMMIT_HASH=""
 
 FROM $BASE_IMAGE
 
+ARG IS_FOR_V7X="false"
+
 # Remove existing versions of dependencies
 RUN pip uninstall -y torch torch_xla torchvision
 
@@ -17,7 +19,11 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /workspace/tpu_inference
 COPY requirements_benchmarking.txt .
 # These are needed for the E2E benchmarking tests (i.e. tests/e2e/benchmarking/mlperf.sh)
-RUN pip install -r requirements_benchmarking.txt --retries 3
+RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements_benchmarking.txt --retries 3
+COPY requirements_v7x.txt .
+RUN --mount=type=cache,target=/root/.cache/pip if [ "$IS_FOR_V7X" = "true" ]; then \
+        pip install -r requirements_v7x.txt; \
+    fi
 COPY . .
 
 # Build vllm-tpu wheel
