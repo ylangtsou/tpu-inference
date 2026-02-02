@@ -110,6 +110,46 @@ steps:
            --ignore=/workspace/tpu_inference/tests/layers/vllm/test_compressed_tensors_moe.py \
            --ignore=/workspace/tpu_inference/tests/models/jax/test_deepseek_v3.py \
            --cov-config=/workspace/tpu_inference/.coveragerc --cov tpu_inference --cov-report term-missing --cov-fail-under=${COV_FAIL_UNDER:-69}
+   
+   - label: "${LABEL_PREFIX}JAX unit tests - 1"
+     key: ${KEY_PREFIX}test_7
+     soft_fail: true
+     env:
+       IS_FOR_V7X: "${IS_FOR_V7X}"
+     agents:
+       queue: ${TPU_QUEUE_SINGLE:-tpu_v6e_queue}
+     commands:
+       - |
+         .buildkite/scripts/run_in_docker.sh \
+           python3 -m pytest -s -v -x \
+           /workspace/tpu_inference/tests/core/ \
+           /workspace/tpu_inference/tests/executors/ \
+           /workspace/tpu_inference/tests/layers/ \
+           --cov-config=/workspace/tpu_inference/.coveragerc --cov tpu_inference --cov-report term-missing --cov-fail-under=${COV_FAIL_UNDER:-69}
+
+   - label: "${LABEL_PREFIX}JAX unit tests - 2" 
+     key: ${KEY_PREFIX}test_7
+     soft_fail: true
+     env:
+       IS_FOR_V7X: "${IS_FOR_V7X}"
+     agents:
+       queue: ${TPU_QUEUE_SINGLE:-tpu_v6e_queue}
+     commands:
+       - |
+         .buildkite/scripts/run_in_docker.sh \
+           python3 -m pytest -s -v -x \
+           /workspace/tpu_inference/tests/distributed/ \
+           /workspace/tpu_inference/tests/experimental/ \
+           /workspace/tpu_inference/tests/models/ \
+           /workspace/tpu_inference/tests/platforms/ \
+           /workspace/tpu_inference/tests/runner/ \
+           /workspace/tpu_inference/tests/spec_decode/ \
+           /workspace/tpu_inference/tests/worker/ \
+           /workspace/tpu_inference/tests/test_envs.py \
+           /workspace/tpu_inference/tests/test_tpu_info.py \
+           /workspace/tpu_inference/tests/test_utils.py \
+           /workspace/tpu_inference/tests/test_base.py \
+           --cov-config=/workspace/tpu_inference/.coveragerc --cov tpu_inference --cov-report term-missing --cov-fail-under=${COV_FAIL_UNDER:-69}
 
    - label: "${LABEL_PREFIX}JAX unit tests - kernels"
      key: ${KEY_PREFIX}test_8
